@@ -3,19 +3,21 @@
 #include "avr/interrupt.h"               // wake up
 
 const int BUZZER_PIN = 4;
-const int SENSOR_PIN = 2;                // not expected to be changed, PB2 is hard-coded when setting up registers
+const int SENSOR_PIN = 1;                // not expected to be changed, apparently attachInterrupt() only works on INT0
 
-volatile bool sensorState = true;        // true = door open, false = door closed
+volatile bool startStopwatch = true;
+bool stopwatchRunning = false;
+uint32_t startTime, elapsedTime;
 
-const uint16_t STAGE1_INTERVAL = 60000;  // 1 minute
-const uint16_t STAGE2_INTERVAL = 60000; // 5 minutes
-int beepState = 0;
-uint16_t prevMillis = 0;
+const uint32_t BEEP1_INTERVAL = 60000;
+const uint32_t BEEP2_INTERVAL = 60000;
 
 void beep1();                            // *click*
 void beep2();                            // *beep*
 void beep3();                            // *BEEP BEEP*
 void handleBeep();
+void risingISR();
+void sleep();
 
 
 void setup(){
@@ -23,33 +25,34 @@ void setup(){
     pinMode(BUZZER_PIN, OUTPUT);
     pinMode(SENSOR_PIN, INPUT_PULLUP);    
 
-    GIMSK |= (1 << PCIE);                // enable pin change interrupt, General Interrupt Mask
-    PCMSK |= (1 << PCINT2);              // enable pin change interrupt on PB2, Pin Change Mask
-    sei();                               // enable global interrupts
-
-    set_sleep_mode(SLEEP_MODE_PWR_DOWN);
-
+    attachInterrupt(digitalPinToInterrupt(SENSOR_PIN), risingISR, RISING);
+                          
 }
 
 void loop(){
-    
-    if(sensorState){
 
-      handleBeep();
+  if(startStopwatch && !stopwatchRunning){
 
-    }
+    startTime = millis();
+    stopwatchRunning = true;
+    startStopwatch = false;
 
-    else{
-        sleep_mode();                    // sleeping conveniently resets millis()    
-    }
+  }
+
+  if(stopwatchRunning){
+
+    handleBeep();
+
+  }
+
+  if(digitalRead(SENSOR_PIN) == LOW){
+    sleep();
+  }
 
 }
 
-// This interrupt fires if a pin change occurs on port B
-ISR(PCINT0_vect) { 
-
-    sensorState = digitalRead(SENSOR_PIN);
-
+void risingISR(){
+  startStopwatch = true;
 }
 
 void beep1(){ 
@@ -88,33 +91,27 @@ void beep3(){
 
 void handleBeep(){
 
-  switch (beepState) {
-    case 0:
-      if (millis() - prevMillis >= STAGE1_INTERVAL) {
-        beepState = 1; // Update state to 1 after interval1
-        prevMillis = millis(); // Reset the reference time
-      } else {
-        beep1();
-      }
-      break;
+  elapsedTime = millis() - startTime;
 
-    case 1:
-      if (millis() - prevMillis >= STAGE2_INTERVAL) {
-        beepState = 2; // Update state to 2 after interval2
-        prevMillis = millis(); // Reset the reference time
-      } else {
-        beep2();
-      }
-      break;
-
-    case 2:
-      beep3();
-      // No need to update state as beep3() is the final function
-      break;
-
-    default:
-      // Do nothing
-      break;
+  if(elapsedTime < BEEP1_INTERVAL){
+    beep1();
   }
+  else if(elapsedTime >= BEEP1_INTERVAL && elapsedTime < BEEP2_INTERVAL + BEEP1_INTERVAL){
+    beep2();
+  }
+  else if (elapsedTime > BEEP1_INTERVAL + BEEP2_INTERVAL){
+    beep3();
+  }
+
+}
+
+void sleep() {
+
+  stopwatchRunning = false;
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN);   // set sleep mode to Power Down
+  sleep_enable();                        // enable sleep mode
+  sei();                                 // enable global interrupts
+  sleep_cpu();                           // put the microcontroller to sleep
+  sleep_disable();                       // disable sleep mode after waking up
 
 }
